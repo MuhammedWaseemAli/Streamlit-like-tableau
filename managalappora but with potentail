@@ -1,0 +1,805 @@
+# Geometry-driven layout Streamlit demo (OOP Refactored with Interactivity)
+# ---------------------------------------------------------------------------
+# Enhanced with OOP design and interactive drill-down features
+# Chart types: BarChart, PieChart, DataTable with click interactions
+
+import json
+import uuid
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+from streamlit.components.v1 import html as st_html
+from abc import ABC, abstractmethod
+from typing import Dict, Any, List
+
+st.set_page_config(page_title="Interactive Geometry Layout", layout="wide")
+
+# =============================================================================
+# ABSTRACT BASE CLASS FOR WIDGETS
+# =============================================================================
+class Widget(ABC):
+    """Abstract base class for all dashboard widgets"""
+    
+    def __init__(self, widget_id: str):
+        self.widget_id = widget_id
+    
+    @abstractmethod
+    def generate_data(self) -> Any:
+        """Generate or prepare data for the widget"""
+        pass
+    
+    @abstractmethod
+    def render_config(self) -> Dict[str, Any]:
+        """Return configuration needed for client-side rendering"""
+        pass
+    
+    @abstractmethod
+    def get_html_template(self) -> str:
+        """Return HTML template snippet for this widget type"""
+        pass
+
+
+# =============================================================================
+# BAR CHART WIDGET WITH DRILL-DOWN
+# =============================================================================
+class BarChart(Widget):
+    """Interactive bar chart with drill-down capability"""
+    
+    def __init__(self, widget_id: str, title: str = "Bar Chart", 
+                 categories: int = 8, color_scheme: str = "sunset"):
+        super().__init__(widget_id)
+        self.title = title
+        self.categories = categories
+        self.color_scheme = color_scheme
+        self.data = None
+        self.figure = None
+        self.drill_down_data = None
+    
+    def generate_data(self) -> pd.DataFrame:
+        """Generate colorful bar chart data with drill-down details"""
+        rng = np.random.default_rng(42)
+        categories = [f"Category {chr(65+i)}" for i in range(self.categories)]
+        values = rng.integers(20, 100, self.categories)
+        
+        self.data = pd.DataFrame({
+            "category": categories,
+            "value": values
+        })
+        
+        # Generate drill-down data for each category
+        self.drill_down_data = {}
+        for cat in categories:
+            subcategories = [f"{cat}-Sub{i+1}" for i in range(5)]
+            subvalues = rng.integers(5, 25, 5)
+            self.drill_down_data[cat] = {
+                "subcategories": subcategories,
+                "values": subvalues.tolist()
+            }
+        
+        # Create beautiful Plotly bar chart
+        colors = self._get_color_palette()
+        
+        self.figure = go.Figure(data=[
+            go.Bar(
+                x=self.data["category"],
+                y=self.data["value"],
+                marker=dict(
+                    color=colors,
+                    line=dict(color='rgba(255,255,255,0.5)', width=1.5)
+                ),
+                text=self.data["value"],
+                textposition='outside',
+                hovertemplate='<b>%{x}</b><br>Value: %{y}<br><i>Click to drill down</i><extra></extra>',
+                customdata=self.data["category"]
+            )
+        ])
+        
+        self.figure.update_layout(
+            title=dict(text=self.title, font=dict(size=20, color="#2c3e50")),
+            plot_bgcolor='rgba(240,248,255,0.3)',
+            paper_bgcolor='rgba(255,255,255,0.95)',
+            xaxis=dict(
+                showgrid=False,
+                showline=True,
+                linecolor='rgba(0,0,0,0.2)'
+            ),
+            yaxis=dict(
+                showgrid=True,
+                gridcolor='rgba(0,0,0,0.05)',
+                showline=True,
+                linecolor='rgba(0,0,0,0.2)'
+            ),
+            margin=dict(l=40, r=20, t=60, b=40),
+            font=dict(family="Arial, sans-serif")
+        )
+        
+        return self.data
+    
+    def _get_color_palette(self) -> List[str]:
+        """Return color palette based on scheme"""
+        palettes = {
+            "sunset": ['#FF6B6B', '#FFA07A', '#FFD93D', '#6BCF7F', '#4ECDC4', '#45B7D1', '#6C5CE7', '#A29BFE'],
+            "ocean": ['#0077BE', '#00B4D8', '#00D9FF', '#48CAE4', '#90E0EF', '#ADE8F4', '#CAF0F8', '#E0F7FF'],
+            "forest": ['#2D6A4F', '#40916C', '#52B788', '#74C69D', '#95D5B2', '#B7E4C7', '#D8F3DC', '#E8F5E9'],
+            "purple": ['#6A0572', '#AB47BC', '#BA68C8', '#CE93D8', '#E1BEE7', '#F3E5F5', '#F8BBD0', '#FCE4EC']
+        }
+        palette = palettes.get(self.color_scheme, palettes["sunset"])
+        return palette[:self.categories]
+    
+    def render_config(self) -> Dict[str, Any]:
+        """Return Plotly figure as JSON with drill-down data"""
+        if self.figure is None:
+            self.generate_data()
+        return {
+            "figure": json.loads(self.figure.to_json()),
+            "drilldown": self.drill_down_data,
+            "type": "bar"
+        }
+    
+    def get_html_template(self) -> str:
+        return """
+        const plotDiv = document.createElement('div');
+        plotDiv.id = 'plot_' + slot.id;
+        plotDiv.style.width = '100%';
+        plotDiv.style.height = '100%';
+        inner.appendChild(plotDiv);
+        
+        const config = WIDGET_DATA[slot.id];
+        Plotly.react(plotDiv, config.figure.data, config.figure.layout || {}, {responsive:true});
+        
+        // Add click interaction for drill-down
+        plotDiv.on('plotly_click', function(data) {
+            const point = data.points[0];
+            const category = point.x;
+            const drillData = config.drilldown[category];
+            
+            if (drillData) {
+                // Create drill-down chart
+                const drillTrace = [{
+                    x: drillData.subcategories,
+                    y: drillData.values,
+                    type: 'bar',
+                    marker: {
+                        color: ['#667eea', '#764ba2', '#f093fb', '#4facfe', '#43e97b'],
+                        line: {color: 'white', width: 2}
+                    },
+                    text: drillData.values,
+                    textposition: 'outside'
+                }];
+                
+                const drillLayout = {
+                    title: {text: 'Breakdown: ' + category, font: {size: 18, color: '#2c3e50'}},
+                    plot_bgcolor: 'rgba(240,248,255,0.3)',
+                    paper_bgcolor: 'rgba(255,255,255,0.95)',
+                    xaxis: {showgrid: false},
+                    yaxis: {showgrid: true, gridcolor: 'rgba(0,0,0,0.05)'},
+                    margin: {l: 40, r: 40, t: 60, b: 80},
+                    annotations: [{
+                        text: '← Click to go back',
+                        xref: 'paper',
+                        yref: 'paper',
+                        x: 0,
+                        y: -0.15,
+                        showarrow: false,
+                        font: {size: 12, color: '#667eea'},
+                        xanchor: 'left'
+                    }]
+                };
+                
+                Plotly.react(plotDiv, drillTrace, drillLayout, {responsive:true});
+                
+                // Add back button functionality
+                plotDiv.on('plotly_click', function() {
+                    Plotly.react(plotDiv, config.figure.data, config.figure.layout || {}, {responsive:true});
+                });
+            }
+        });
+        """
+
+
+# =============================================================================
+# PIE CHART WIDGET WITH DRILL-DOWN
+# =============================================================================
+class PieChart(Widget):
+    """Interactive pie chart with drill-down to bar chart"""
+    
+    def __init__(self, widget_id: str, title: str = "Pie Chart",
+                 segments: int = 6, color_scheme: str = "rainbow"):
+        super().__init__(widget_id)
+        self.title = title
+        self.segments = segments
+        self.color_scheme = color_scheme
+        self.data = None
+        self.figure = None
+        self.detail_data = None
+    
+    def generate_data(self) -> pd.DataFrame:
+        """Generate colorful pie chart data with detail breakdown"""
+        rng = np.random.default_rng(123)
+        labels = [f"Segment {i+1}" for i in range(self.segments)]
+        values = rng.integers(15, 100, self.segments)
+        
+        self.data = pd.DataFrame({
+            "label": labels,
+            "value": values
+        })
+        
+        # Generate monthly trend data for each segment
+        self.detail_data = {}
+        months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']
+        for label in labels:
+            base = rng.integers(10, 30)
+            trend = base + np.cumsum(rng.integers(-5, 8, 6))
+            self.detail_data[label] = {
+                "months": months,
+                "values": trend.tolist()
+            }
+        
+        # Create beautiful Plotly pie chart
+        colors = self._get_color_palette()
+        
+        self.figure = go.Figure(data=[
+            go.Pie(
+                labels=self.data["label"],
+                values=self.data["value"],
+                hole=0.4,
+                marker=dict(
+                    colors=colors,
+                    line=dict(color='white', width=2)
+                ),
+                textinfo='label+percent',
+                textposition='outside',
+                hovertemplate='<b>%{label}</b><br>Value: %{value}<br>Percent: %{percent}<br><i>Click for trend</i><extra></extra>'
+            )
+        ])
+        
+        self.figure.update_layout(
+            title=dict(text=self.title, font=dict(size=20, color="#2c3e50")),
+            paper_bgcolor='rgba(255,255,255,0.95)',
+            margin=dict(l=20, r=20, t=60, b=20),
+            font=dict(family="Arial, sans-serif", size=12),
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=-0.2,
+                xanchor="center",
+                x=0.5,
+                bgcolor='rgba(255,255,255,0.8)',
+                bordercolor='rgba(0,0,0,0.1)',
+                borderwidth=1
+            )
+        )
+        
+        return self.data
+    
+    def _get_color_palette(self) -> List[str]:
+        """Return color palette based on scheme"""
+        palettes = {
+            "rainbow": ['#FF6B6B', '#FFA500', '#FFD700', '#32CD32', '#1E90FF', '#9370DB', '#FF1493', '#00CED1'],
+            "pastel": ['#FFB3BA', '#FFDFBA', '#FFFFBA', '#BAFFC9', '#BAE1FF', '#E0BBE4', '#FFDFD3', '#FEC8D8'],
+            "vibrant": ['#E74C3C', '#F39C12', '#F1C40F', '#2ECC71', '#3498DB', '#9B59B6', '#E91E63', '#00BCD4'],
+            "earth": ['#8D6E63', '#A1887F', '#BCAAA4', '#D7CCC8', '#A5D6A7', '#C5E1A5', '#E6EE9C', '#FFF59D']
+        }
+        palette = palettes.get(self.color_scheme, palettes["rainbow"])
+        return palette[:self.segments]
+    
+    def render_config(self) -> Dict[str, Any]:
+        """Return Plotly figure as JSON with detail data"""
+        if self.figure is None:
+            self.generate_data()
+        return {
+            "figure": json.loads(self.figure.to_json()),
+            "details": self.detail_data,
+            "type": "pie"
+        }
+    
+    def get_html_template(self) -> str:
+        return """
+        const plotDiv = document.createElement('div');
+        plotDiv.id = 'plot_' + slot.id;
+        plotDiv.style.width = '100%';
+        plotDiv.style.height = '100%';
+        inner.appendChild(plotDiv);
+        
+        const config = WIDGET_DATA[slot.id];
+        Plotly.react(plotDiv, config.figure.data, config.figure.layout || {}, {responsive:true});
+        
+        // Add click interaction to show trend
+        plotDiv.on('plotly_click', function(data) {
+            const point = data.points[0];
+            const segment = point.label;
+            const detailData = config.details[segment];
+            
+            if (detailData) {
+                // Create line chart showing trend
+                const trendTrace = [{
+                    x: detailData.months,
+                    y: detailData.values,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    line: {color: '#667eea', width: 3},
+                    marker: {size: 10, color: '#764ba2'},
+                    fill: 'tozeroy',
+                    fillcolor: 'rgba(102,126,234,0.2)'
+                }];
+                
+                const trendLayout = {
+                    title: {text: segment + ' - Monthly Trend', font: {size: 18, color: '#2c3e50'}},
+                    plot_bgcolor: 'rgba(240,248,255,0.3)',
+                    paper_bgcolor: 'rgba(255,255,255,0.95)',
+                    xaxis: {showgrid: false, title: 'Month'},
+                    yaxis: {showgrid: true, gridcolor: 'rgba(0,0,0,0.05)', title: 'Value'},
+                    margin: {l: 50, r: 20, t: 60, b: 80},
+                    annotations: [{
+                        text: '← Click to go back',
+                        xref: 'paper',
+                        yref: 'paper',
+                        x: 0,
+                        y: -0.18,
+                        showarrow: false,
+                        font: {size: 12, color: '#667eea'},
+                        xanchor: 'left'
+                    }]
+                };
+                
+                Plotly.react(plotDiv, trendTrace, trendLayout, {responsive:true});
+                
+                // Add back button functionality
+                plotDiv.on('plotly_click', function() {
+                    Plotly.react(plotDiv, config.figure.data, config.figure.layout || {}, {responsive:true});
+                });
+            }
+        });
+        """
+
+
+# =============================================================================
+# DATA TABLE WIDGET WITH FILTERING
+# =============================================================================
+class DataTable(Widget):
+    """Interactive data table with click-to-filter"""
+    
+    def __init__(self, widget_id: str, title: str = "Data Table",
+                 rows: int = 30, style: str = "modern"):
+        super().__init__(widget_id)
+        self.title = title
+        self.rows = rows
+        self.style = style
+        self.data = None
+        self.html = None
+    
+    def generate_data(self) -> pd.DataFrame:
+        """Generate colorful table data"""
+        rng = np.random.default_rng(456)
+        
+        categories = ["Electronics", "Clothing", "Food", "Books", "Toys"]
+        statuses = ["✓ Active", "⏸ Pending", "✗ Inactive"]
+        
+        self.data = pd.DataFrame({
+            "Product": [f"Product {chr(65 + (i % 26))}{i//26 + 1}" for i in range(self.rows)],
+            "Category": rng.choice(categories, self.rows),
+            "Sales": np.round(rng.random(self.rows) * 5000 + 500, 2),
+            "Units": rng.integers(10, 500, self.rows),
+            "Rating": np.round(rng.random(self.rows) * 2 + 3, 1),
+            "Status": rng.choice(statuses, self.rows)
+        })
+        
+        return self.data
+    
+    def render_config(self) -> Dict[str, Any]:
+        """Return table data as JSON"""
+        if self.data is None:
+            self.generate_data()
+        return {
+            "data": self.data.to_dict('records'),
+            "columns": list(self.data.columns),
+            "title": self.title,
+            "style": self.style
+        }
+    
+    def get_html_template(self) -> str:
+        return """
+        const config = WIDGET_DATA[slot.id];
+        let filteredData = [...config.data];
+        let activeFilter = null;
+        
+        function renderTable(data, highlightCol = null) {
+            const styleConfigs = {
+                modern: {
+                    headerBg: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    headerColor: 'white',
+                    rowEven: 'rgba(245,247,250,0.8)',
+                    rowOdd: 'white',
+                    border: '#e1e8ed'
+                }
+            };
+            const style = styleConfigs[config.style] || styleConfigs.modern;
+            
+            let html = `<div style="overflow:auto; height:100%;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <h3 style="margin:0; color:#2c3e50; font-family:Arial,sans-serif;">${config.title}</h3>
+                    ${activeFilter ? `<button onclick="resetFilter()" style="padding:6px 12px; background:#667eea; color:white; border:none; border-radius:6px; cursor:pointer; font-size:12px;">✕ Clear Filter</button>` : ''}
+                </div>
+                <table style="width:100%; border-collapse:collapse; font-family:Arial,sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                <thead><tr style="background:${style.headerBg}; color:${style.headerColor};">`;
+            
+            config.columns.forEach(col => {
+                const isHighlight = col === highlightCol;
+                html += `<th onclick="filterByColumn('${col}')" style="padding:12px 8px; text-align:left; font-weight:600; border:1px solid ${style.border}; cursor:pointer; ${isHighlight ? 'background:rgba(255,255,255,0.2);' : ''}">${col} ${isHighlight ? '▼' : ''}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+            
+            data.forEach((row, idx) => {
+                const bg = idx % 2 === 0 ? style.rowEven : style.rowOdd;
+                html += `<tr style="background:${bg}; transition: background 0.2s;" onmouseover="this.style.background='rgba(102,126,234,0.15)'" onmouseout="this.style.background='${bg}'">`;
+                config.columns.forEach(col => {
+                    html += `<td style="padding:10px 8px; border:1px solid ${style.border}; font-size:13px;">${row[col]}</td>`;
+                });
+                html += '</tr>';
+            });
+            html += '</tbody></table></div>';
+            
+            inner.innerHTML = html;
+        }
+        
+        window.filterByColumn = function(col) {
+            if (activeFilter === col) return;
+            
+            // Get unique values
+            const values = [...new Set(filteredData.map(row => row[col]))];
+            if (values.length <= 1) return;
+            
+            // Filter to most common value
+            const counts = {};
+            filteredData.forEach(row => {
+                counts[row[col]] = (counts[row[col]] || 0) + 1;
+            });
+            const topValue = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
+            
+            filteredData = config.data.filter(row => row[col] === topValue);
+            activeFilter = col;
+            renderTable(filteredData, col);
+        };
+        
+        window.resetFilter = function() {
+            filteredData = [...config.data];
+            activeFilter = null;
+            renderTable(filteredData);
+        };
+        
+        renderTable(filteredData);
+        """
+
+
+# =============================================================================
+# KPI CARD WIDGET WITH ANIMATION
+# =============================================================================
+class KPICard(Widget):
+    """Animated KPI display cards"""
+    
+    def __init__(self, widget_id: str, kpis: Dict[str, Any] = None):
+        super().__init__(widget_id)
+        self.kpis = kpis or self._generate_default_kpis()
+    
+    def _generate_default_kpis(self) -> Dict[str, Any]:
+        """Generate default KPI values"""
+        return {
+            "💰 Revenue": f"${np.random.randint(80, 150)}K",
+            "👥 Users": f"{np.random.randint(4500, 6500):,}",
+            "📈 Growth": f"+{np.random.randint(15, 35)}%",
+            "⭐ Rating": f"{np.round(np.random.random() * 0.5 + 4.5, 1)}"
+        }
+    
+    def generate_data(self) -> Dict[str, Any]:
+        """Return KPI data"""
+        return self.kpis
+    
+    def render_config(self) -> Dict[str, Any]:
+        """Return KPI configuration"""
+        return {"kpis": self.kpis}
+    
+    def get_html_template(self) -> str:
+        return """
+        const card = document.createElement('div');
+        card.style.cssText = 'display:flex; align-items:center; justify-content:space-around; gap:12px; height:100%; flex-wrap:wrap;';
+        
+        const kpis = WIDGET_DATA[slot.id].kpis;
+        const colors = ['#667eea', '#f093fb', '#4facfe', '#43e97b'];
+        let colorIdx = 0;
+        
+        for (const [label, value] of Object.entries(kpis)) {
+            const item = document.createElement('div');
+            item.style.cssText = `
+                text-align:center; 
+                font-family:Arial,sans-serif; 
+                padding:20px 28px; 
+                background:linear-gradient(135deg, ${colors[colorIdx % colors.length]} 0%, ${colors[(colorIdx + 1) % colors.length]} 100%);
+                border-radius:16px;
+                box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+                min-width:140px;
+                transition: all 0.3s;
+                cursor: pointer;
+                opacity: 0;
+                transform: translateY(20px);
+            `;
+            
+            // Animate in
+            setTimeout(() => {
+                item.style.opacity = '1';
+                item.style.transform = 'translateY(0)';
+            }, colorIdx * 100);
+            
+            item.onmouseover = function() { 
+                this.style.transform = 'scale(1.08) translateY(-5px)'; 
+                this.style.boxShadow = '0 10px 30px rgba(0,0,0,0.25)';
+            };
+            item.onmouseout = function() { 
+                this.style.transform = 'scale(1) translateY(0)'; 
+                this.style.boxShadow = '0 6px 20px rgba(0,0,0,0.15)';
+            };
+            
+            item.innerHTML = `
+                <div style="color:rgba(255,255,255,0.95); font-size:${Math.max(12, Math.round(fontSize*0.9))}px; margin-bottom:8px; font-weight:500;">${label}</div>
+                <div style="color:white; font-weight:700; font-size:${Math.max(24, Math.round(fontSize*1.7))}px; text-shadow: 0 2px 4px rgba(0,0,0,0.2);">${value}</div>
+            `;
+            card.appendChild(item);
+            colorIdx++;
+        }
+        inner.appendChild(card);
+        """
+
+# =============================================================================
+# DASHBOARD MANAGER
+# =============================================================================
+class DashboardManager:
+    """Manages all widgets and layout configuration"""
+    
+    def __init__(self, layout_config: Dict[str, Any]):
+        self.layout = layout_config
+        self.widgets: Dict[str, Widget] = {}
+    
+    def register_widget(self, slot_id: str, widget: Widget):
+        """Register a widget for a specific slot"""
+        self.widgets[slot_id] = widget
+        widget.generate_data()
+    
+    def get_widget_configs(self) -> Dict[str, Any]:
+        """Get all widget rendering configurations"""
+        configs = {}
+        for slot_id, widget in self.widgets.items():
+            configs[slot_id] = widget.render_config()
+        return configs
+    
+    def generate_html(self) -> str:
+        """Generate complete HTML with all widgets"""
+        meta = self.layout.get("meta", {})
+        padding_px = int(meta.get("padding_px", 8))
+        base_area_px = int(meta.get("base_area_px", 60000))
+        show_grid = bool(meta.get("show_grid", False))
+        
+        widget_configs = self.get_widget_configs()
+        
+        # Build widget rendering logic
+        widget_render_cases = []
+        for slot_id, widget in self.widgets.items():
+            case = f"""
+            else if (slot.id === '{slot_id}') {{
+                {widget.get_html_template()}
+            }}"""
+            widget_render_cases.append(case)
+        
+        widget_render_code = '\n'.join(widget_render_cases)
+        
+        html_template = f"""
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    html,body {{ margin:0; padding:0; height:100%; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); }}
+    .canvas-container {{
+      position: relative;
+      width: 100%;
+      height: 85vh;
+      overflow: hidden;
+    }}
+    .slot {{
+      position: absolute;
+      box-sizing: border-box;
+      overflow: hidden;
+      background-clip: padding-box;
+      transition: box-shadow 0.3s;
+    }}
+    .slot:hover {{
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    }}
+    .slot .slot-inner {{
+      width: 100%;
+      height: 100%;
+      padding: {padding_px}px;
+      box-sizing: border-box;
+      overflow: auto;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(10px);
+    }}
+    .grid-overlay {{
+      position:absolute; inset:0; pointer-events:none;
+      background-image: linear-gradient(to right, rgba(102,126,234,0.1) 1px, transparent 1px),
+                        linear-gradient(to bottom, rgba(102,126,234,0.1) 1px, transparent 1px);
+      background-size: 40px 40px;
+      opacity: 0.3;
+    }}
+    /* Custom scrollbar */
+    .slot-inner::-webkit-scrollbar {{ width: 8px; height: 8px; }}
+    .slot-inner::-webkit-scrollbar-track {{ background: rgba(0,0,0,0.05); border-radius: 10px; }}
+    .slot-inner::-webkit-scrollbar-thumb {{ background: rgba(102,126,234,0.5); border-radius: 10px; }}
+    .slot-inner::-webkit-scrollbar-thumb:hover {{ background: rgba(102,126,234,0.7); }}
+  </style>
+</head>
+<body>
+  <div id="canvas" class="canvas-container"></div>
+  <script>
+    (function() {{
+      const LAYOUT = {json.dumps(self.layout)};
+      const WIDGET_DATA = {json.dumps(widget_configs)};
+      const BASE_AREA = {base_area_px};
+      const SHOW_GRID = {json.dumps(show_grid)};
+
+      const canvas = document.getElementById('canvas');
+      const rect = canvas.getBoundingClientRect();
+      let Vw = rect.width;
+      let Vh = rect.height;
+
+      const useMobile = (Vw < 700);
+
+      if (SHOW_GRID) {{
+        const grid = document.createElement('div');
+        grid.className = 'grid-overlay';
+        canvas.appendChild(grid);
+      }}
+
+      function addSlot(slot) {{
+        const left = Math.round(slot.x * Vw);
+        const top  = Math.round(slot.y * Vh);
+        const w    = Math.round(slot.w * Vw);
+        const h    = Math.round(slot.h * Vh);
+
+        const div = document.createElement('div');
+        div.className = 'slot';
+        div.style.left = left + 'px';
+        div.style.top  = top  + 'px';
+        div.style.width= w + 'px';
+        div.style.height= h + 'px';
+        if (slot.border) div.style.border = '2px solid rgba(102,126,234,0.3)';
+
+        const inner = document.createElement('div');
+        inner.className = 'slot-inner';
+        inner.id = 'slot-inner-' + slot.id;
+        div.appendChild(inner);
+        canvas.appendChild(div);
+
+        const scale = Math.sqrt((w * h) / BASE_AREA);
+        const fontSize = Math.max(10, Math.round(14 * scale));
+        inner.style.fontSize = fontSize + 'px';
+
+        // Widget rendering logic
+        if (false) {{
+          // Placeholder
+        }}
+        {widget_render_code}
+        else {{
+          inner.innerHTML = '<div style="padding:20px; color:#999; text-align:center;">Empty slot: ' + slot.id + '</div>';
+        }}
+      }}
+
+      if (useMobile) {{
+        const n = LAYOUT.slots.length;
+        const hEach = 1 / n;
+        LAYOUT.slots.forEach((s, i) => {{
+          const stacked = {{ id: s.id, x: 0, y: i * hEach, w: 1, h: hEach, border: s.border }};
+          addSlot(stacked);
+        }});
+      }} else {{
+        LAYOUT.slots.forEach(addSlot);
+      }}
+    }})();
+  </script>
+</body>
+</html>
+"""
+        return html_template
+
+
+# =============================================================================
+# LAYOUT CONFIGURATION (UNCHANGED - YOUR CUSTOM BOX ALLOCATION)
+# =============================================================================
+DEFAULT_LAYOUT = {
+    "meta": {
+        "name": "demo_layout_oop",
+        "padding_px": 12,
+        "show_grid": False,
+        "base_area_px": 60000
+    },
+    "slots": [
+        {"id": "kpi_row", "x": 0.00, "y": 0.00, "w": 1.00, "h": 0.15, "border": True},
+        {"id": "chart_bar", "x": 0.00, "y": 0.15, "w": 0.50, "h": 0.42, "border": True},
+        {"id": "chart_pie", "x": 0.50, "y": 0.15, "w": 0.50, "h": 0.42, "border": True},
+        {"id": "data_table", "x": 0.00, "y": 0.57, "w": 1.00, "h": 0.43, "border": True}
+    ]
+}
+
+# Alternative layout example
+ALT_LAYOUT = {
+    "meta": {"name": "alt_layout", "padding_px": 12, "show_grid": False, "base_area_px": 60000},
+    "slots": [
+        {"id": "kpi_row", "x": 0.00, "y": 0.00, "w": 1.00, "h": 0.12, "border": True},
+        {"id": "chart_pie", "x": 0.00, "y": 0.13, "w": 0.35, "h": 0.42, "border": True},
+        {"id": "chart_bar", "x": 0.36, "y": 0.13, "w": 0.64, "h": 0.42, "border": True},
+        {"id": "data_table", "x": 0.00, "y": 0.56, "w": 1.00, "h": 0.44, "border": True}
+    ]
+}
+
+# =============================================================================
+# MAIN APPLICATION
+# =============================================================================
+
+# Choose active layout
+ACTIVE_LAYOUT = DEFAULT_LAYOUT  # Change to ALT_LAYOUT to see alternative
+
+# Initialize Dashboard Manager
+dashboard = DashboardManager(ACTIVE_LAYOUT)
+
+# Register widgets to specific slots
+dashboard.register_widget("kpi_row", KPICard("kpi_row"))
+dashboard.register_widget("chart_bar", BarChart("chart_bar", "Monthly Sales Performance", categories=8, color_scheme="sunset"))
+dashboard.register_widget("chart_pie", PieChart("chart_pie", "Market Share Distribution", segments=6, color_scheme="rainbow"))
+dashboard.register_widget("data_table", DataTable("data_table", "Recent Transactions", rows=30, style="modern"))
+
+# Generate and render HTML
+st.title("🎨 Geometry-Driven Dashboard (OOP)")
+st.caption("Object-oriented design with beautiful, colorful visualizations. Custom box allocation preserved!")
+
+html_content = dashboard.generate_html()
+st_html(html_content, height=740, scrolling=True)
+
+# Documentation
+st.markdown("---")
+st.subheader("📚 How to Use This System")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("""
+    ### 🎯 Adding New Widgets
+    1. Create a new class inheriting from `Widget`
+    2. Implement `generate_data()`, `render_config()`, `get_html_template()`
+    3. Register it: `dashboard.register_widget(slot_id, YourWidget())`
+    
+    ### 🎨 Available Widgets
+    - **BarChart**: `BarChart(id, title, categories, color_scheme)`
+    - **PieChart**: `PieChart(id, title, segments, color_scheme)`
+    - **DataTable**: `DataTable(id, title, rows, style)`
+    - **KPICard**: `KPICard(id, kpis_dict)`
+    """)
+
+with col2:
+    st.markdown("""
+    ### 📐 Custom Layout (Unchanged!)
+    Your custom box allocation system remains intact:
+    - Edit `DEFAULT_LAYOUT['slots']` to change positions
+    - Coordinates are normalized `[0..1]`
+    - `x, y, w, h` define position and size
+    - Switch layouts by changing `ACTIVE_LAYOUT`
+    
+    ### 🎨 Color Schemes
+    - Bar: sunset, ocean, forest, purple
+    - Pie: rainbow, pastel, vibrant, earth
+    - Table: modern, ocean, sunset
+    """)
+
+st.success("✨ System is fully extensible! Add more widget classes following the same OOP pattern.")
