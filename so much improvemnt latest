@@ -1,0 +1,756 @@
+import json
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+from streamlit.components.v1 import html as st_html
+from typing import Dict, Any, List, Callable
+
+# --------------------------------------------------------
+# STREAMLIT PAGE
+# --------------------------------------------------------
+st.set_page_config(page_title="Automatic Multi-Tab Dashboard", layout="wide")
+
+
+# ========================================================
+# 1) GENERIC WIDGET CLASS THAT ACCEPTS FULL FIGURES
+# ========================================================
+class GenericWidget:
+    """
+    Universal widget that accepts a complete Plotly figure or data structure.
+    No need to modify widget classes - everything is in the plot function!
+    """
+    def __init__(self, widget_id: str, plot_func: Callable):
+        self.widget_id = widget_id
+        self.plot_func = plot_func
+        self.data = None
+        self.widget_type = None
+
+    def generate_data(self):
+        """Execute the plot function to get data"""
+        result = self.plot_func()
+        self.data = result
+        self.widget_type = result.get('type', 'unknown')
+        return result
+
+    def render_config(self) -> Dict[str, Any]:
+        if self.data is None:
+            self.generate_data()
+        return self.data
+
+    def get_html_template(self) -> str:
+        """Returns appropriate template based on widget type"""
+        if self.widget_type == 'plotly':
+            return """
+            const plotDiv = document.createElement('div');
+            plotDiv.style.width = '100%';
+            plotDiv.style.height = '100%';
+            inner.appendChild(plotDiv);
+
+            const cfg = WIDGET_DATA[slot.id];
+            Plotly.react(plotDiv, cfg.figure.data, cfg.figure.layout || {}, {
+                responsive: true, 
+                displayModeBar: true,
+                modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d'],
+                displaylogo: false
+            });
+            """
+        elif self.widget_type == 'table':
+            return """
+            const cfg = WIDGET_DATA[slot.id];
+            let html = `<h4 style="margin:0 0 8px 0;">${cfg.title}</h4>`;
+            html += `<div style="overflow:auto; height:100%;">`;
+            html += `<table style="width:100%; border-collapse:collapse; font-size:${Math.max(11, fontSize*0.8)}px;">`;
+            html += `<tr style="background:#f0f0f0;">`;
+            cfg.columns.forEach(col => {
+                html += `<th style="padding:6px 4px; border:1px solid #ddd; text-align:left;">${col}</th>`;
+            });
+            html += `</tr>`;
+            cfg.data.forEach((row) => {
+                html += `<tr>`;
+                cfg.columns.forEach(col => {
+                    html += `<td style="padding:5px 4px; border:1px solid #eee;">${row[col]}</td>`;
+                });
+                html += `</tr>`;
+            });
+            html += `</table></div>`;
+            inner.innerHTML = html;
+            """
+        elif self.widget_type == 'kpi':
+            return """
+            const cfg = WIDGET_DATA[slot.id];
+            const wrap = document.createElement('div');
+            wrap.style.display = 'flex';
+            wrap.style.gap = '10px';
+            wrap.style.flexWrap = 'wrap';
+            wrap.style.height = '100%';
+
+            Object.entries(cfg.kpis).forEach(([label, value]) => {
+                const card = document.createElement('div');
+                card.style.background = '#fff';
+                card.style.border = '1px solid #e3e3e3';
+                card.style.borderRadius = '8px';
+                card.style.padding = '10px 12px';
+                card.style.minWidth = '130px';
+                card.innerHTML = `
+                    <div style="font-size:${Math.max(11, fontSize*0.75)}px; color:#555;">${label}</div>
+                    <div style="font-size:${Math.max(18, fontSize*1.25)}px; font-weight:700; margin-top:4px;">${value}</div>
+                `;
+                wrap.appendChild(card);
+            });
+
+            inner.appendChild(wrap);
+            """
+        else:
+            return """
+            inner.innerHTML = '<div style="color:#999;">Unknown widget type</div>';
+            """
+
+
+# ========================================================
+# 2) PLOT FUNCTIONS LIBRARY - EACH IS FULLY INDEPENDENT
+# ========================================================
+class PlotFunctions:
+    """
+    Each function returns a COMPLETE widget configuration.
+    Modify ONLY the function you want to change - nothing else!
+    """
+    
+    @staticmethod
+    def sales_by_category():
+        """ENHANCED: Colorful interactive bar chart"""
+        categories = ["Electronics", "Clothing", "Food", "Books", "Toys"]
+        sales = [45000, 32000, 28000, 19000, 15000]
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8']
+        growth = ['+12%', '+8%', '-3%', '+15%', '+5%']
+        
+        # Create the complete Plotly figure
+        fig = go.Figure(data=[go.Bar(
+            x=categories, 
+            y=sales,
+            marker=dict(
+                color=colors,
+                line=dict(color='rgba(255,255,255,0.8)', width=2),
+            ),
+            text=[f'${val/1000:.1f}K<br>{gr}' for val, gr in zip(sales, growth)],
+            textposition='outside',
+            textfont=dict(size=12, color='#2d3436', family='Arial Black'),
+            hovertemplate='<b>%{x}</b><br>' +
+                          'Sales: $%{y:,.0f}<br>' +
+                          '<extra></extra>',
+            hoverlabel=dict(
+                bgcolor="white",
+                font_size=14,
+                font_family="Arial"
+            )
+        )])
+        
+        fig.update_layout(
+            title=dict(
+                text="Sales by Category",
+                font=dict(size=18, color='#2d3436', family='Arial Black'),
+                x=0.5,
+                xanchor='center'
+            ),
+            plot_bgcolor='rgba(245,246,250,0.5)',
+            paper_bgcolor='white',
+            margin=dict(l=20, r=20, t=50, b=20),
+            xaxis=dict(
+                showgrid=False,
+                showline=True,
+                linewidth=2,
+                linecolor='#dfe6e9',
+                tickfont=dict(size=11, color='#636e72', family='Arial')
+            ),
+            yaxis=dict(
+                showgrid=True,
+                gridwidth=1,
+                gridcolor='rgba(223,230,233,0.5)',
+                showline=False,
+                tickfont=dict(size=11, color='#636e72', family='Arial'),
+                title=dict(text='Sales ($)', font=dict(size=12, color='#2d3436'))
+            ),
+            transition=dict(duration=500),
+            hovermode='x unified'
+        )
+        
+        return {
+            'type': 'plotly',
+            'figure': json.loads(fig.to_json())
+        }
+    
+    @staticmethod
+    def weekly_revenue():
+        """Basic line chart"""
+        weeks = ["Week 1", "Week 2", "Week 3", "Week 4", "Week 5", "Week 6", "Week 7"]
+        revenue = [12000, 15000, 13500, 18000, 21000, 19500, 23000]
+        
+        fig = go.Figure(data=[go.Scatter(x=weeks, y=revenue, mode="lines+markers")])
+        fig.update_layout(title="Weekly Revenue Trend", margin=dict(l=20, r=20, t=35, b=20))
+        
+        return {
+            'type': 'plotly',
+            'figure': json.loads(fig.to_json())
+        }
+    
+    @staticmethod
+    
+    def regional_distribution():
+        """
+        Monthly “Pending vs Resolved” complaint chart (STACKED) converted to Plotly
+        so it works with the existing dashboard engine.
+
+        Reads:
+            C:\\Users\\wasee\\Downloads\\NEW GDA\\merged_cleaned_sorted_complaints.csv
+
+        Expects columns:
+            - "Date and Time"  (parseable datetime)
+            - "Status"         (with value "Pending" for pending ones, anything else = resolved)
+
+        If file is missing / columns not found → shows an error figure.
+        """
+        # ── CONFIG (mirrors your original script) ─────────────────────────────
+        CONFIG = {
+            "input_file": r"C:\Users\wasee\Downloads\NEW GDA\merged_cleaned_sorted_complaints.csv",
+            "start_date": "2022-08-01",
+            "colours": {
+                "pending": "#ea5813",
+                "resolved": "#8db824"
+            },
+            "title": "Monthly Complaints: Pending vs Resolved",
+        }
+
+        try:
+            # 1) READ
+            df = pd.read_csv(CONFIG["input_file"])
+            if "Date and Time" not in df.columns:
+                raise KeyError("Column 'Date and Time' not found in CSV")
+            if "Status" not in df.columns:
+                raise KeyError("Column 'Status' not found in CSV")
+
+            df["Date and Time"] = pd.to_datetime(df["Date and Time"], errors="coerce")
+            df = df.dropna(subset=["Date and Time"])
+            df = df[df["Date and Time"] >= pd.Timestamp(CONFIG["start_date"])]
+
+            # 2) CREATE FLAGS + MONTH
+            df["Is_Pending"] = df["Status"].eq("Pending")
+            df["MonthPeriod"] = df["Date and Time"].dt.to_period("M")
+
+            monthly = (
+                df.groupby("MonthPeriod")
+                  .agg(Pending=("Is_Pending", "sum"),
+                       Total=("Is_Pending", "count"))
+                  .sort_index()
+            )
+            monthly["Resolved"] = monthly["Total"] - monthly["Pending"]
+
+            # 3) LABELS
+            labels = [p.strftime("%B %Y") for p in monthly.index]
+            pending_vals = monthly["Pending"].tolist()
+            resolved_vals = monthly["Resolved"].tolist()
+
+            # 4) BUILD PLOTLY STACKED BAR
+            fig = go.Figure()
+
+            fig.add_bar(
+                name="Pending",
+                x=labels,
+                y=pending_vals,
+                marker_color=CONFIG["colours"]["pending"],
+                text=[str(int(v)) if v else "" for v in pending_vals],
+                textposition="inside",
+                insidetextanchor="middle"
+            )
+            fig.add_bar(
+                name="Resolved",
+                x=labels,
+                y=resolved_vals,
+                marker_color=CONFIG["colours"]["resolved"],
+                text=[str(int(v)) if v else "" for v in resolved_vals],
+                textposition="inside",
+                insidetextanchor="middle"
+            )
+
+            fig.update_layout(
+                barmode="stack",
+                title=CONFIG["title"],
+                xaxis=dict(
+                    title="Month & Year",
+                    tickangle=-45,
+                ),
+                yaxis=dict(
+                    title="Number of Complaints",
+                    rangemode="tozero"
+                ),
+                margin=dict(l=40, r=20, t=60, b=80),
+                legend=dict(orientation="h", y=1.1),
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+            )
+
+            # nicer hover
+            fig.update_traces(
+                hovertemplate="%{x}<br>%{y} complaints<extra>%{fullData.name}</extra>"
+            )
+
+            return {
+                "type": "plotly",
+                "figure": json.loads(fig.to_json())
+            }
+
+        except Exception as e:
+            # FALLBACK PLOT IF ANYTHING GOES WRONG
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"Error loading complaints data:<br>{e}",
+                showarrow=False,
+                font=dict(color="red", size=14)
+            )
+            fig.update_layout(
+                title="Monthly Complaints: Pending vs Resolved",
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                margin=dict(l=20, r=20, t=60, b=20)
+            )
+            return {
+                "type": "plotly",
+                "figure": json.loads(fig.to_json())
+            }
+
+    
+    @staticmethod
+    def customer_data():
+        """Basic table"""
+        df = pd.DataFrame({
+            "Customer": [f"Customer {i+1}" for i in range(10)],
+            "Orders": np.random.randint(1, 50, 10),
+            "Revenue": [f"${x}K" for x in np.random.randint(5, 100, 10)],
+            "Status": np.random.choice(["Active", "Pending", "Completed"], 10)
+        })
+        
+        return {
+            'type': 'table',
+            'title': 'Customer Data',
+            'columns': list(df.columns),
+            'data': df.to_dict('records')
+        }
+    
+    @staticmethod
+    def overview_kpis():
+        """Basic KPI cards"""
+        return {
+            'type': 'kpi',
+            'kpis': {
+                "Total Revenue": "$1.2M",
+                "Active Users": "8,450",
+                "Growth Rate": "+18%",
+                "Avg Order": "$145"
+            }
+        }
+    
+    @staticmethod
+    def product_performance():
+        """Basic bar chart"""
+        products = ["Product A", "Product B", "Product C", "Product D", "Product E"]
+        performance = [88, 72, 95, 65, 81]
+        
+        fig = go.Figure(data=[go.Bar(x=products, y=performance)])
+        fig.update_layout(title="Product Performance", margin=dict(l=20, r=20, t=35, b=20))
+        
+        return {
+            'type': 'plotly',
+            'figure': json.loads(fig.to_json())
+        }
+    
+    @staticmethod
+    def monthly_trend():
+        """Basic line chart"""
+        months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
+        values = [100, 120, 115, 140, 155, 170]
+        
+        fig = go.Figure(data=[go.Scatter(x=months, y=values, mode="lines+markers")])
+        fig.update_layout(title="Monthly Trend", margin=dict(l=20, r=20, t=35, b=20))
+        
+        return {
+            'type': 'plotly',
+            'figure': json.loads(fig.to_json())
+        }
+    
+    @staticmethod
+    def status_breakdown():
+        """Basic pie chart"""
+        statuses = ["Completed", "In Progress", "Pending", "Cancelled"]
+        counts = [45, 30, 15, 10]
+        
+        fig = go.Figure(data=[go.Pie(labels=statuses, values=counts, hole=0.3)])
+        fig.update_layout(title="Status Breakdown", margin=dict(l=10, r=10, t=35, b=10))
+        
+        return {
+            'type': 'plotly',
+            'figure': json.loads(fig.to_json())
+        }
+    
+    @staticmethod
+    def analytics_table():
+        """Basic table"""
+        df = pd.DataFrame({
+            "Metric": ["Sessions", "Page Views", "Bounce Rate", "Avg Duration", 
+                      "Conversions", "Revenue", "Users", "New Visitors"],
+            "Value": ["15,240", "42,180", "38.5%", "3m 24s", 
+                     "1,248", "$84,230", "8,450", "5,120"],
+            "Change": ["+12%", "+8%", "-5%", "+15%", "+22%", "+18%", "+10%", "+14%"]
+        })
+        
+        return {
+            'type': 'table',
+            'title': 'Analytics Overview',
+            'columns': list(df.columns),
+            'data': df.to_dict('records')
+        }
+    
+    @staticmethod
+    def performance_kpis():
+        """Basic KPI cards"""
+        return {
+            'type': 'kpi',
+            'kpis': {
+                "Server Uptime": "99.9%",
+                "Response Time": "120ms",
+                "Error Rate": "0.02%"
+            }
+        }
+
+
+# ========================================================
+# 3) PLOT REGISTRY - MAP NAMES TO FUNCTIONS
+# ========================================================
+PLOT_REGISTRY = {
+    "sales_by_category": PlotFunctions.sales_by_category,
+    "weekly_revenue": PlotFunctions.weekly_revenue,
+    "regional_distribution": PlotFunctions.regional_distribution,
+    "customer_data": PlotFunctions.customer_data,
+    "overview_kpis": PlotFunctions.overview_kpis,
+    "product_performance": PlotFunctions.product_performance,
+    "monthly_trend": PlotFunctions.monthly_trend,
+    "status_breakdown": PlotFunctions.status_breakdown,
+    "analytics_table": PlotFunctions.analytics_table,
+    "performance_kpis": PlotFunctions.performance_kpis,
+}
+
+
+# ========================================================
+# 4) BOX-PLOT MAPPING
+# ========================================================
+BOX_PLOT_MAPPING = {
+    # TAB 1 - Overview
+    "T1B1": "overview_kpis",
+    "T1B2": "sales_by_category",
+    "T1B3": "regional_distribution",
+    "T1B4": "customer_data",
+    
+    # TAB 2 - Analytics
+    "T2B1": "weekly_revenue",
+    "T2B2": "product_performance",
+    "T2B3": "analytics_table",
+    
+    # TAB 3 - Performance
+    "T3B1": "performance_kpis",
+    "T3B2": "status_breakdown",
+    "T3B3": "monthly_trend",
+}
+
+
+# ========================================================
+# 5) TAB LAYOUT DEFINITIONS
+# ========================================================
+TAB_LAYOUTS = {
+    "Tab1": {
+        "name": "Overview",
+        "layout": {
+            "meta": {"name": "overview"},
+            "slots": [
+                {"id": "T1B1", "x": 0.00, "y": 0.00, "w": 1.00, "h": 0.15},
+                {"id": "T1B2", "x": 0.00, "y": 0.15, "w": 0.40, "h": 0.40},
+                {"id": "T1B3", "x": 0.40, "y": 0.15, "w": 0.60, "h": 0.40},
+                {"id": "T1B4", "x": 0.00, "y": 0.58, "w": 1.00, "h": 0.42},
+            ]
+        }
+    },
+    "Tab2": {
+        "name": "Analytics",
+        "layout": {
+            "meta": {"name": "analytics"},
+            "slots": [
+                {"id": "T2B1", "x": 0.00, "y": 0.00, "w": 0.60, "h": 0.50},
+                {"id": "T2B2", "x": 0.60, "y": 0.00, "w": 0.40, "h": 0.50},
+                {"id": "T2B3", "x": 0.00, "y": 0.51, "w": 1.00, "h": 0.49},
+            ]
+        }
+    },
+    "Tab3": {
+        "name": "Performance",
+        "layout": {
+            "meta": {"name": "performance"},
+            "slots": [
+                {"id": "T3B1", "x": 0.00, "y": 0.00, "w": 1.00, "h": 0.20},
+                {"id": "T3B2", "x": 0.00, "y": 0.21, "w": 0.40, "h": 0.79},
+                {"id": "T3B3", "x": 0.40, "y": 0.21, "w": 0.60, "h": 0.79},
+            ]
+        }
+    }
+}
+
+
+# ========================================================
+# 6) DASHBOARD CLASSES
+# ========================================================
+class DashboardTab:
+    def __init__(self, name: str, layout_config: Dict[str, Any]):
+        self.name = name
+        self.layout = layout_config
+        self.widgets: Dict[str, GenericWidget] = {}
+
+    def register_widget(self, slot_id: str, widget: GenericWidget):
+        self.widgets[slot_id] = widget
+        widget.generate_data()
+
+    def get_widget_configs(self) -> Dict[str, Any]:
+        return {slot_id: w.render_config() for slot_id, w in self.widgets.items()}
+
+    def get_widget_templates(self) -> Dict[str, str]:
+        return {slot_id: w.get_html_template() for slot_id, w in self.widgets.items()}
+
+
+class MultiTabDashboard:
+    def __init__(self, title: str = "Dashboard"):
+        self.title = title
+        self.tabs: List[DashboardTab] = []
+
+    def add_tab(self, tab: DashboardTab):
+        self.tabs.append(tab)
+
+    def generate_html(self) -> str:
+        tabs_data = []
+        for tab in self.tabs:
+            tabs_data.append({
+                "name": tab.name,
+                "layout": tab.layout,
+                "widgets": tab.get_widget_configs(),
+                "templates": tab.get_widget_templates(),
+            })
+
+        html_template = f"""
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    html, body {{
+      margin:0;
+      padding:0;
+      height:100%;
+      background:#f5f6fa;
+      font-family: Arial, sans-serif;
+    }}
+    .header {{
+      background:#2f3542;
+      color:white;
+      padding:14px 20px;
+      font-size:18px;
+      font-weight:600;
+    }}
+    .tabs {{
+      display:flex;
+      gap:6px;
+      background:#2f3542;
+      padding:0 20px 8px 20px;
+    }}
+    .tab-btn {{
+      background: rgba(255,255,255,0.05);
+      border:none;
+      color:#dfe4ea;
+      padding:6px 14px;
+      border-radius:6px 6px 0 0;
+      cursor:pointer;
+      font-size:14px;
+    }}
+    .tab-btn.active {{
+      background:#f5f6fa;
+      color:#2f3542;
+      font-weight:600;
+    }}
+    .tab-content {{
+      display:none;
+    }}
+    .tab-content.active {{
+      display:block;
+    }}
+    .canvas {{
+      position:relative;
+      width:100%;
+      height: calc(100vh - 110px);
+      background:#f5f6fa;
+    }}
+    .slot {{
+      position:absolute;
+      padding:6px;
+      box-sizing:border-box;
+    }}
+    .slot-inner {{
+      background:white;
+      border:1px solid #e3e3e3;
+      border-radius:8px;
+      height:100%;
+      width:100%;
+      overflow:auto;
+      padding:8px;
+      box-sizing:border-box;
+    }}
+  </style>
+</head>
+<body>
+  <div class="header">{self.title}</div>
+  <div class="tabs" id="tabs"></div>
+  <div id="content"></div>
+
+  <script>
+  (function() {{
+      const TABS_DATA = {json.dumps(tabs_data)};
+      const tabsRoot = document.getElementById('tabs');
+      const contentRoot = document.getElementById('content');
+      const BASE_AREA = 50000;
+
+      TABS_DATA.forEach((tab, i) => {{
+          const btn = document.createElement('button');
+          btn.className = 'tab-btn' + (i === 0 ? ' active' : '');
+          btn.textContent = tab.name;
+          btn.onclick = () => switchTab(i);
+          tabsRoot.appendChild(btn);
+
+          const content = document.createElement('div');
+          content.className = 'tab-content' + (i === 0 ? ' active' : '');
+          content.id = 'tab-' + i;
+
+          const canvas = document.createElement('div');
+          canvas.className = 'canvas';
+          canvas.id = 'canvas-' + i;
+          content.appendChild(canvas);
+
+          contentRoot.appendChild(content);
+      }});
+
+      TABS_DATA.forEach((tab, i) => {{
+          renderTab(i, tab, false);
+      }});
+
+      function switchTab(idx) {{
+          document.querySelectorAll('.tab-btn').forEach((b, i) => {{
+              b.classList.toggle('active', i === idx);
+          }});
+          document.querySelectorAll('.tab-content').forEach((c, i) => {{
+              c.classList.toggle('active', i === idx);
+          }});
+          renderTab(idx, TABS_DATA[idx], true);
+      }}
+
+      function renderTab(idx, tab, forceVisible) {{
+          const canvas = document.getElementById('canvas-' + idx);
+          if (!canvas) return;
+
+          let vw, vh;
+          const rect = canvas.getBoundingClientRect();
+          if ((rect.width === 0 || rect.height === 0) && !forceVisible) {{
+              vw = window.innerWidth - 40;
+              vh = window.innerHeight - 140;
+          }} else {{
+              vw = rect.width || (window.innerWidth - 40);
+              vh = rect.height || (window.innerHeight - 140);
+          }}
+
+          canvas.innerHTML = '';
+
+          tab.layout.slots.forEach(slot => {{
+              const left = Math.round(slot.x * vw);
+              const top = Math.round(slot.y * vh);
+              const w = Math.round(slot.w * vw);
+              const h = Math.round(slot.h * vh);
+
+              const slotDiv = document.createElement('div');
+              slotDiv.className = 'slot';
+              slotDiv.style.left = left + 'px';
+              slotDiv.style.top = top + 'px';
+              slotDiv.style.width = w + 'px';
+              slotDiv.style.height = h + 'px';
+
+              const inner = document.createElement('div');
+              inner.className = 'slot-inner';
+              slotDiv.appendChild(inner);
+              canvas.appendChild(slotDiv);
+
+              const area = w * h;
+              const scale = Math.sqrt(area / BASE_AREA);
+              const fontSize = Math.max(10, Math.round(14 * scale));
+
+              const WIDGET_DATA = tab.widgets;
+              const TEMPLATES = tab.templates;
+
+              if (TEMPLATES[slot.id] && WIDGET_DATA[slot.id]) {{
+                  try {{
+                      const fn = new Function('slot', 'inner', 'fontSize', 'WIDGET_DATA', TEMPLATES[slot.id]);
+                      fn(slot, inner, fontSize, WIDGET_DATA);
+                  }} catch (err) {{
+                      inner.innerHTML = '<div style="color:red;">Error: ' + err.message + '</div>';
+                  }}
+              }} else {{
+                  inner.innerHTML = '<div style="color:#999;">Empty slot: ' + slot.id + '</div>';
+              }}
+          }});
+      }}
+
+      let r;
+      window.addEventListener('resize', () => {{
+          clearTimeout(r);
+          r = setTimeout(() => {{
+              TABS_DATA.forEach((tab, i) => renderTab(i, tab, i === 0));
+          }}, 200);
+      }});
+  }})();
+  </script>
+</body>
+</html>
+"""
+        return html_template
+
+
+# ========================================================
+# 7) AUTOMATIC DASHBOARD BUILDER
+# ========================================================
+def build_dashboard_automatically():
+    """Builds the entire dashboard using mappings"""
+    dashboard = MultiTabDashboard("📊 Automatic Multi-Tab Dashboard")
+    
+    for tab_key, tab_config in TAB_LAYOUTS.items():
+        tab = DashboardTab(tab_config["name"], tab_config["layout"])
+        
+        for slot in tab_config["layout"]["slots"]:
+            box_id = slot["id"]
+            
+            if box_id in BOX_PLOT_MAPPING:
+                plot_name = BOX_PLOT_MAPPING[box_id]
+                if plot_name in PLOT_REGISTRY:
+                    plot_func = PLOT_REGISTRY[plot_name]
+                    widget = GenericWidget(box_id, plot_func)
+                    tab.register_widget(box_id, widget)
+        
+        dashboard.add_tab(tab)
+    
+    return dashboard
+
+
+# ========================================================
+# 8) RENDER
+# ========================================================
+dashboard = build_dashboard_automatically()
+html_code = dashboard.generate_html()
+st_html(html_code, height=820, scrolling=False)
