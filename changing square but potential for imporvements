@@ -1,0 +1,1184 @@
+import json
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+from streamlit.components.v1 import html as st_html
+from typing import Dict, Any, List, Callable
+
+# --------------------------------------------------------
+# STREAMLIT PAGE
+# --------------------------------------------------------
+st.set_page_config(page_title="Professional Dashboard", layout="wide")
+
+
+# ========================================================
+# DASHBOARD APPEARANCE SETTINGS - CUSTOMIZE HERE!
+# ========================================================
+DASHBOARD_STYLE = {
+    # Header styling
+    "header_bg": "#1a1d29",           # Dark blue-gray
+    "header_text": "#ffffff",
+    "header_height": "65px",
+    "header_font_size": "24px",
+    "header_font_weight": "700",
+    "header_padding": "18px 30px",
+    
+    # Tab styling
+    "tab_bg": "#1a1d29",
+    "tab_padding": "0 30px 10px 30px",
+    "tab_button_bg": "rgba(255,255,255,0.08)",
+    "tab_button_text": "#b8bcc8",
+    "tab_button_active_bg": "#f8f9fa",
+    "tab_button_active_text": "#1a1d29",
+    "tab_button_padding": "10px 20px",
+    "tab_button_font_size": "15px",
+    "tab_button_radius": "8px 8px 0 0",
+    "tab_gap": "8px",
+    
+    # Canvas/Background
+    "canvas_bg": "#f0f2f5",           # Light gray background
+    
+    # Box/Widget styling
+    "box_bg": "#ffffff",
+    "box_border_color": "#000000",    # Black border
+    "box_border_width": "2px",        # Border thickness
+    "box_border_radius": "12px",      # Rounded corners
+    "box_padding": "16px",
+    "box_shadow": "0 2px 8px rgba(0,0,0,0.08)",  # Subtle shadow
+    "box_gap": "12px",                # Space between boxes
+    
+    # Typography
+    "font_family": "'Inter', 'Segoe UI', Arial, sans-serif",
+}
+
+
+# ========================================================
+# GENERIC WIDGET CLASS
+# ========================================================
+class GenericWidget:
+    """
+    Universal widget that accepts a complete Plotly figure or data structure.
+    No need to modify widget classes - everything is in the plot function!
+    """
+    def __init__(self, widget_id: str, plot_func: Callable):
+        self.widget_id = widget_id
+        self.plot_func = plot_func
+        self.data = None
+        self.widget_type = None
+
+    def generate_data(self):
+        """Execute the plot function to get data"""
+        result = self.plot_func()
+        self.data = result
+        self.widget_type = result.get('type', 'unknown')
+        return result
+
+    def render_config(self) -> Dict[str, Any]:
+        if self.data is None:
+            self.generate_data()
+        return self.data
+
+    def get_html_template(self) -> str:
+        """Returns appropriate template based on widget type"""
+        if self.widget_type == 'plotly':
+            return """
+            const plotDiv = document.createElement('div');
+            plotDiv.style.width = '100%';
+            plotDiv.style.height = '100%';
+            inner.appendChild(plotDiv);
+
+            const cfg = WIDGET_DATA[slot.id];
+            Plotly.react(plotDiv, cfg.figure.data, cfg.figure.layout || {}, {
+                responsive: true, 
+                displayModeBar: true,
+                modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d'],
+                displaylogo: false
+            });
+            """
+        elif self.widget_type == 'table':
+            return """
+            const cfg = WIDGET_DATA[slot.id];
+            let html = `<h4 style="margin:0 0 12px 0; font-size:${Math.max(14, fontSize*0.95)}px; font-weight:600; color:#1a1d29;">${cfg.title}</h4>`;
+            html += `<div style="overflow:auto; height:calc(100% - 30px); border:1px solid #e8e8e8; border-radius:6px;">`;
+            html += `<table style="width:100%; border-collapse:collapse; font-size:${Math.max(12, fontSize*0.85)}px;">`;
+            html += `<thead style="position:sticky; top:0; background:#f8f9fa; z-index:1;">`;
+            html += `<tr>`;
+            cfg.columns.forEach(col => {
+                html += `<th style="padding:10px 8px; border-bottom:2px solid #dee2e6; text-align:left; font-weight:600;">${col}</th>`;
+            });
+            html += `</tr></thead><tbody>`;
+            cfg.data.forEach((row, idx) => {
+                html += `<tr style="background:${idx % 2 === 0 ? '#fff' : '#f8f9fa'};">`;
+                cfg.columns.forEach(col => {
+                    html += `<td style="padding:8px; border-bottom:1px solid #f0f0f0;">${row[col]}</td>`;
+                });
+                html += `</tr>`;
+            });
+            html += `</tbody></table></div>`;
+            inner.innerHTML = html;
+            """
+        elif self.widget_type == 'kpi':
+            return """
+            const cfg = WIDGET_DATA[slot.id];
+            const wrap = document.createElement('div');
+            wrap.style.display = 'flex';
+            wrap.style.gap = '14px';
+            wrap.style.flexWrap = 'wrap';
+            wrap.style.height = '100%';
+            wrap.style.alignItems = 'stretch';
+
+            Object.entries(cfg.kpis).forEach(([label, value]) => {
+                const card = document.createElement('div');
+                card.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                card.style.border = 'none';
+                card.style.borderRadius = '10px';
+                card.style.padding = '16px 18px';
+                card.style.minWidth = '160px';
+                card.style.flex = '1';
+                card.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.25)';
+                card.style.transition = 'transform 0.2s ease';
+                card.style.cursor = 'pointer';
+                card.onmouseenter = () => card.style.transform = 'translateY(-4px)';
+                card.onmouseleave = () => card.style.transform = 'translateY(0)';
+                
+                card.innerHTML = `
+                    <div style="font-size:${Math.max(11, fontSize*0.75)}px; color:rgba(255,255,255,0.85); text-transform:uppercase; letter-spacing:0.5px; font-weight:500;">${label}</div>
+                    <div style="font-size:${Math.max(24, fontSize*1.5)}px; font-weight:700; margin-top:8px; color:#fff;">${value}</div>
+                `;
+                wrap.appendChild(card);
+            });
+
+            inner.appendChild(wrap);
+            """
+        else:
+            return """
+            inner.innerHTML = '<div style="color:#999; text-align:center; padding:20px;">Unknown widget type</div>';
+            """
+
+
+# ========================================================
+# PLOT FUNCTIONS LIBRARY
+# ========================================================
+class PlotFunctions:
+    """
+    Each function returns a COMPLETE widget configuration.
+    Modify ONLY the function you want to change - nothing else!
+    """
+    
+    @staticmethod
+    def sales_by_category():
+        """ENHANCED: Colorful interactive bar chart"""
+        categories = ["Electronics", "Clothing", "Food", "Books", "Toys"]
+        sales = [45000, 32000, 28000, 19000, 15000]
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8']
+        growth = ['+12%', '+8%', '-3%', '+15%', '+5%']
+        
+        # Create the complete Plotly figure
+        fig = go.Figure(data=[go.Bar(
+            x=categories, 
+            y=sales,
+            marker=dict(
+                color=colors,
+                line=dict(color='rgba(255,255,255,0.8)', width=2),
+            ),
+            text=[f'${val/1000:.1f}K<br>{gr}' for val, gr in zip(sales, growth)],
+            textposition='outside',
+            textfont=dict(size=12, color='#2d3436', family='Arial Black'),
+            hovertemplate='<b>%{x}</b><br>' +
+                          'Sales: $%{y:,.0f}<br>' +
+                          '<extra></extra>',
+            hoverlabel=dict(
+                bgcolor="white",
+                font_size=14,
+                font_family="Arial"
+            )
+        )])
+        
+        fig.update_layout(
+            title=dict(
+                text="Sales by Category",
+                font=dict(size=18, color='#2d3436', family='Arial Black'),
+                x=0.5,
+                xanchor='center'
+            ),
+            plot_bgcolor='rgba(245,246,250,0.5)',
+            paper_bgcolor='white',
+            margin=dict(l=20, r=20, t=50, b=20),
+            xaxis=dict(
+                showgrid=False,
+                showline=True,
+                linewidth=2,
+                linecolor='#dfe6e9',
+                tickfont=dict(size=11, color='#636e72', family='Arial')
+            ),
+            yaxis=dict(
+                showgrid=True,
+                gridwidth=1,
+                gridcolor='rgba(223,230,233,0.5)',
+                showline=False,
+                tickfont=dict(size=11, color='#636e72', family='Arial'),
+                title=dict(text='Sales ($)', font=dict(size=12, color='#2d3436'))
+            ),
+            transition=dict(duration=500),
+            hovermode='x unified'
+        )
+        
+        return {
+            'type': 'plotly',
+            'figure': json.loads(fig.to_json())
+        }
+    
+    @staticmethod
+    def weekly_revenue():
+        """
+        Waterfall chart: Allocation vs Total (with GAP)
+        Reads from Excel file and creates a waterfall visualization
+        """
+        # ================== USER CONTROLS ==================
+        EXCEL_PATH   = r"C:\Users\wasee\OneDrive\Documents\DUMMY WATERFLOWCHART DATA2.xlsx"
+        SHEET_NAME   = None               # or "Sheet1"
+        RANGE_REF    = "F10:G13"            # first row must be TOTAL
+        CHART_TITLE  = "Waterfall: Allocation vs Total (with GAP)"
+        
+        # ---- Label placement mode ----
+        #   "inside"  -> inside bars, 90° anticlockwise, white text
+        #   "top"     -> on top of bars (outside)
+        TEXT_MODE    = "inside"           # change to "top" when needed
+        
+        # ---- Aesthetics / Font sizes ----
+        TITLE_SIZE       = 26
+        BASE_FONT_SIZE   = 16              # default font in chart
+        AXIS_TITLE_SIZE  = 30
+        TICK_FONT_SIZE   = 30
+        BAR_TEXT_SIZE    = 34              # numbers drawn on bars
+        TOP_HEADROOM_PCT = 0.35            # extra space above tallest bar (when TEXT_MODE="top")
+        
+        # ---- Colors ----
+        CLR_TOTAL = "#2E86AB"              # blue
+        CLR_DEC   = "#F39C12"              # orange (decreasing: parts+GAP)
+        CLR_INC   = "#2ECC71"              # green  (if positives exist)
+        # ===================================================
+        
+        def read_range_as_pairs(xlsx_path: str, range_ref: str, sheet_name: str = None):
+            from openpyxl import load_workbook
+            wb = load_workbook(xlsx_path, data_only=True, read_only=True)
+            ws = wb.active if sheet_name is None else wb[sheet_name]
+            cells = ws[range_ref]
+            rows = [[c.value for c in row] for row in cells]
+            pairs = []
+            for r in rows:
+                if r and len(r) >= 2:
+                    label = (str(r[0]).strip() if r[0] is not None else "")
+                    try:
+                        value = float(r[1])
+                    except Exception:
+                        value = None
+                    if label and value is not None:
+                        pairs.append((label, value))
+            if not pairs:
+                raise ValueError("Selected range has no valid [label, value] rows.")
+            return pairs
+        
+        try:
+            pairs = read_range_as_pairs(EXCEL_PATH, RANGE_REF, SHEET_NAME)
+            
+            # Build series
+            total_label, total_value = pairs[0][0], float(pairs[0][1])
+            parts = pairs[1:]
+            parts_sum = sum(float(v) for _, v in parts)
+            gap_value = total_value - parts_sum
+            
+            x_labels = [total_label] + [lbl for lbl, _ in parts] + ["GAP"]
+            measures = ["absolute"] + ["relative"] * (len(x_labels) - 1)
+            y_vals   = [total_value] + [-float(v) for _, v in parts] + [-gap_value]
+            
+            # Headroom for labels if shown on top
+            if TEXT_MODE.lower() == "top":
+                ymax = max(total_value, 0) * (1 + TOP_HEADROOM_PCT)
+                text_position = "outside"
+                text_angle = 0
+                textfont_kw = dict(textfont=dict(size=BAR_TEXT_SIZE), outsidetextfont=dict(size=BAR_TEXT_SIZE))
+                cliponaxis = False
+            else:
+                ymax = None
+                text_position = "inside"
+                text_angle = 90
+                textfont_kw = dict(textfont=dict(size=BAR_TEXT_SIZE, color="white"),
+                                insidetextfont=dict(size=BAR_TEXT_SIZE, color="white"),
+                                insidetextanchor="middle")
+                cliponaxis = True
+            
+            fig = go.Figure(go.Waterfall(
+                name="Allocation",
+                orientation="v",
+                measure=measures,
+                x=x_labels,
+                y=y_vals,
+                connector={"line": {"width": 1.2, "color": "rgba(0,0,0,0.25)"}},
+                text=[f"{v:,.0f}" for v in [total_value] + [float(v) for _, v in parts] + [gap_value]],
+                textposition=text_position,
+                cliponaxis=cliponaxis,
+                textangle=text_angle,
+                decreasing={"marker": {"color": CLR_DEC}},
+                increasing={"marker": {"color": CLR_INC}},
+                totals={"marker": {"color": CLR_TOTAL}},
+                hovertemplate="<b>%{x}</b><br>Value: %{y:,.0f}<extra></extra>",
+                **textfont_kw
+            ))
+            
+            fig.update_layout(
+                title=dict(text=CHART_TITLE, font=dict(size=TITLE_SIZE, family="Segoe UI, Arial, sans-serif")),
+                font=dict(size=BASE_FONT_SIZE, family="Segoe UI, Arial, sans-serif"),
+                showlegend=False,
+                template="plotly_white",
+                margin=dict(l=80, r=60, t=100, b=80),
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+                xaxis=dict(
+                    title="",
+                    tickfont=dict(size=TICK_FONT_SIZE),
+                    showline=True, linecolor="rgba(0,0,0,0.25)"
+                ),
+                yaxis=dict(
+                    title="Amount",
+                    titlefont=dict(size=AXIS_TITLE_SIZE),
+                    tickfont=dict(size=TICK_FONT_SIZE),
+                    showline=True, linecolor="rgba(0,0,0,0.25)",
+                    gridcolor="rgba(0,0,0,0.07)",
+                    range=[None, ymax] if ymax is not None else None
+                )
+            )
+            
+            fig.update_yaxes(zeroline=True, zerolinewidth=1.2, zerolinecolor="#888")
+            
+            summary = f"Total: {total_value:,.0f} | Parts: {parts_sum:,.0f} | GAP: {gap_value:,.0f}"
+            fig.add_annotation(
+                x=0.5, y=1.08, xref="paper", yref="paper",
+                text=summary,
+                showarrow=False,
+                font=dict(size=BASE_FONT_SIZE, color="rgba(0,0,0,0.65)")
+            )
+            
+            return {
+                'type': 'plotly',
+                'figure': json.loads(fig.to_json())
+            }
+            
+        except Exception as e:
+            # FALLBACK if Excel file can't be read
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"Error loading waterfall data:<br>{e}",
+                showarrow=False,
+                font=dict(color="red", size=14)
+            )
+            fig.update_layout(
+                title="Waterfall: Allocation vs Total (with GAP)",
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                margin=dict(l=20, r=20, t=60, b=20)
+            )
+            return {
+                'type': 'plotly',
+                'figure': json.loads(fig.to_json())
+            }
+    
+    @staticmethod
+    
+    def regional_distribution():
+        """
+        Monthly “Pending vs Resolved” complaint chart (STACKED) converted to Plotly
+        so it works with the existing dashboard engine.
+
+        Reads:
+            C:\\Users\\wasee\\Downloads\\NEW GDA\\merged_cleaned_sorted_complaints.csv
+
+        Expects columns:
+            - "Date and Time"  (parseable datetime)
+            - "Status"         (with value "Pending" for pending ones, anything else = resolved)
+
+        If file is missing / columns not found → shows an error figure.
+        """
+        # ── CONFIG (mirrors your original script) ─────────────────────────────
+        CONFIG = {
+            "input_file": r"C:\Users\wasee\Downloads\NEW GDA\merged_cleaned_sorted_complaints.csv",
+            "start_date": "2022-08-01",
+            "colours": {
+                "pending": "#ea5813",
+                "resolved": "#8db824"
+            },
+            "title": "Monthly Complaints: Pending vs Resolved",
+        }
+
+        try:
+            # 1) READ
+            df = pd.read_csv(CONFIG["input_file"])
+            if "Date and Time" not in df.columns:
+                raise KeyError("Column 'Date and Time' not found in CSV")
+            if "Status" not in df.columns:
+                raise KeyError("Column 'Status' not found in CSV")
+
+            df["Date and Time"] = pd.to_datetime(df["Date and Time"], errors="coerce")
+            df = df.dropna(subset=["Date and Time"])
+            df = df[df["Date and Time"] >= pd.Timestamp(CONFIG["start_date"])]
+
+            # 2) CREATE FLAGS + MONTH
+            df["Is_Pending"] = df["Status"].eq("Pending")
+            df["MonthPeriod"] = df["Date and Time"].dt.to_period("M")
+
+            monthly = (
+                df.groupby("MonthPeriod")
+                  .agg(Pending=("Is_Pending", "sum"),
+                       Total=("Is_Pending", "count"))
+                  .sort_index()
+            )
+            monthly["Resolved"] = monthly["Total"] - monthly["Pending"]
+
+            # 3) LABELS
+            labels = [p.strftime("%B %Y") for p in monthly.index]
+            pending_vals = monthly["Pending"].tolist()
+            resolved_vals = monthly["Resolved"].tolist()
+
+            # 4) BUILD PLOTLY STACKED BAR
+            fig = go.Figure()
+
+            fig.add_bar(
+                name="Pending",
+                x=labels,
+                y=pending_vals,
+                marker_color=CONFIG["colours"]["pending"],
+                text=[str(int(v)) if v else "" for v in pending_vals],
+                textposition="inside",
+                insidetextanchor="middle"
+            )
+            fig.add_bar(
+                name="Resolved",
+                x=labels,
+                y=resolved_vals,
+                marker_color=CONFIG["colours"]["resolved"],
+                text=[str(int(v)) if v else "" for v in resolved_vals],
+                textposition="inside",
+                insidetextanchor="middle"
+            )
+
+            fig.update_layout(
+                barmode="stack",
+                title=CONFIG["title"],
+                xaxis=dict(
+                    title="Month & Year",
+                    tickangle=-45,
+                ),
+                yaxis=dict(
+                    title="Number of Complaints",
+                    rangemode="tozero"
+                ),
+                margin=dict(l=40, r=20, t=60, b=80),
+                legend=dict(orientation="h", y=1.1),
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+            )
+
+            # nicer hover
+            fig.update_traces(
+                hovertemplate="%{x}<br>%{y} complaints<extra>%{fullData.name}</extra>"
+            )
+
+            return {
+                "type": "plotly",
+                "figure": json.loads(fig.to_json())
+            }
+
+        except Exception as e:
+            # FALLBACK PLOT IF ANYTHING GOES WRONG
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"Error loading complaints data:<br>{e}",
+                showarrow=False,
+                font=dict(color="red", size=14)
+            )
+            fig.update_layout(
+                title="Monthly Complaints: Pending vs Resolved",
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                margin=dict(l=20, r=20, t=60, b=20)
+            )
+            return {
+                "type": "plotly",
+                "figure": json.loads(fig.to_json())
+            }
+
+    
+    @staticmethod
+    
+    def customer_data():
+        """
+        Waterfall chart: Allocation vs Total (with GAP)
+        Reads from Excel file and creates a waterfall visualization
+        """
+        # ================== USER CONTROLS ==================
+        EXCEL_PATH   = r"C:\Users\wasee\OneDrive\Documents\DUMMY WATERFLOWCHART DATA.xlsx"
+        SHEET_NAME   = None               # or "Sheet1"
+        RANGE_REF    = "A2:B5"            # first row must be TOTAL
+        CHART_TITLE  = "Waterfall: Allocation vs Total (with GAP)"
+        
+        # ---- Label placement mode ----
+        #   "inside"  -> inside bars, 90° anticlockwise, white text
+        #   "top"     -> on top of bars (outside)
+        TEXT_MODE    = "inside"           # change to "top" when needed
+        
+        # ---- Aesthetics / Font sizes ----
+        TITLE_SIZE       = 26
+        BASE_FONT_SIZE   = 16              # default font in chart
+        AXIS_TITLE_SIZE  = 30
+        TICK_FONT_SIZE   = 30
+        BAR_TEXT_SIZE    = 34              # numbers drawn on bars
+        TOP_HEADROOM_PCT = 0.35            # extra space above tallest bar (when TEXT_MODE="top")
+        
+        # ---- Colors ----
+        CLR_TOTAL = "#2E86AB"              # blue
+        CLR_DEC   = "#F39C12"              # orange (decreasing: parts+GAP)
+        CLR_INC   = "#2ECC71"              # green  (if positives exist)
+        # ===================================================
+        
+        def read_range_as_pairs(xlsx_path: str, range_ref: str, sheet_name: str = None):
+            from openpyxl import load_workbook
+            wb = load_workbook(xlsx_path, data_only=True, read_only=True)
+            ws = wb.active if sheet_name is None else wb[sheet_name]
+            cells = ws[range_ref]
+            rows = [[c.value for c in row] for row in cells]
+            pairs = []
+            for r in rows:
+                if r and len(r) >= 2:
+                    label = (str(r[0]).strip() if r[0] is not None else "")
+                    try:
+                        value = float(r[1])
+                    except Exception:
+                        value = None
+                    if label and value is not None:
+                        pairs.append((label, value))
+            if not pairs:
+                raise ValueError("Selected range has no valid [label, value] rows.")
+            return pairs
+        
+        try:
+            pairs = read_range_as_pairs(EXCEL_PATH, RANGE_REF, SHEET_NAME)
+            
+            # Build series
+            total_label, total_value = pairs[0][0], float(pairs[0][1])
+            parts = pairs[1:]
+            parts_sum = sum(float(v) for _, v in parts)
+            gap_value = total_value - parts_sum
+            
+            x_labels = [total_label] + [lbl for lbl, _ in parts] + ["GAP"]
+            measures = ["absolute"] + ["relative"] * (len(x_labels) - 1)
+            y_vals   = [total_value] + [-float(v) for _, v in parts] + [-gap_value]
+            
+            # Headroom for labels if shown on top
+            if TEXT_MODE.lower() == "top":
+                ymax = max(total_value, 0) * (1 + TOP_HEADROOM_PCT)
+                text_position = "outside"
+                text_angle = 0
+                textfont_kw = dict(textfont=dict(size=BAR_TEXT_SIZE), outsidetextfont=dict(size=BAR_TEXT_SIZE))
+                cliponaxis = False
+            else:
+                ymax = None
+                text_position = "inside"
+                text_angle = 90
+                textfont_kw = dict(textfont=dict(size=BAR_TEXT_SIZE, color="white"),
+                                insidetextfont=dict(size=BAR_TEXT_SIZE, color="white"),
+                                insidetextanchor="middle")
+                cliponaxis = True
+            
+            fig = go.Figure(go.Waterfall(
+                name="Allocation",
+                orientation="v",
+                measure=measures,
+                x=x_labels,
+                y=y_vals,
+                connector={"line": {"width": 1.2, "color": "rgba(0,0,0,0.25)"}},
+                text=[f"{v:,.0f}" for v in [total_value] + [float(v) for _, v in parts] + [gap_value]],
+                textposition=text_position,
+                cliponaxis=cliponaxis,
+                textangle=text_angle,
+                decreasing={"marker": {"color": CLR_DEC}},
+                increasing={"marker": {"color": CLR_INC}},
+                totals={"marker": {"color": CLR_TOTAL}},
+                hovertemplate="<b>%{x}</b><br>Value: %{y:,.0f}<extra></extra>",
+                **textfont_kw
+            ))
+            
+            fig.update_layout(
+                title=dict(text=CHART_TITLE, font=dict(size=TITLE_SIZE, family="Segoe UI, Arial, sans-serif")),
+                font=dict(size=BASE_FONT_SIZE, family="Segoe UI, Arial, sans-serif"),
+                showlegend=False,
+                template="plotly_white",
+                margin=dict(l=80, r=60, t=100, b=80),
+                plot_bgcolor="white",
+                paper_bgcolor="white",
+                xaxis=dict(
+                    title="",
+                    tickfont=dict(size=TICK_FONT_SIZE),
+                    showline=True, linecolor="rgba(0,0,0,0.25)"
+                ),
+                yaxis=dict(
+                    title="Amount",
+                    titlefont=dict(size=AXIS_TITLE_SIZE),
+                    tickfont=dict(size=TICK_FONT_SIZE),
+                    showline=True, linecolor="rgba(0,0,0,0.25)",
+                    gridcolor="rgba(0,0,0,0.07)",
+                    range=[None, ymax] if ymax is not None else None
+                )
+            )
+            
+            fig.update_yaxes(zeroline=True, zerolinewidth=1.2, zerolinecolor="#888")
+            
+            summary = f"Total: {total_value:,.0f} | Parts: {parts_sum:,.0f} | GAP: {gap_value:,.0f}"
+            fig.add_annotation(
+                x=0.5, y=1.08, xref="paper", yref="paper",
+                text=summary,
+                showarrow=False,
+                font=dict(size=BASE_FONT_SIZE, color="rgba(0,0,0,0.65)")
+            )
+            
+            return {
+                'type': 'plotly',
+                'figure': json.loads(fig.to_json())
+            }
+            
+        except Exception as e:
+            # FALLBACK if Excel file can't be read
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"Error loading waterfall data:<br>{e}",
+                showarrow=False,
+                font=dict(color="red", size=14)
+            )
+            fig.update_layout(
+                title="Waterfall: Allocation vs Total (with GAP)",
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                margin=dict(l=20, r=20, t=60, b=20)
+            )
+            return {
+                'type': 'plotly',
+                'figure': json.loads(fig.to_json())
+            }
+    
+    @staticmethod
+    def overview_kpis():
+        """Basic KPI cards"""
+        return {
+            'type': 'kpi',
+            'kpis': {
+                "Total Revenue": "$1.2M",
+                "Active Users": "8,450",
+                "Growth Rate": "+18%",
+                "Avg Order": "$145"
+            }
+        }
+    
+    @staticmethod
+    def product_performance():
+        """Basic bar chart"""
+        products = ["Product A", "Product B", "Product C", "Product D", "Product E"]
+        performance = [88, 72, 95, 65, 81]
+        
+        fig = go.Figure(data=[go.Bar(x=products, y=performance)])
+        fig.update_layout(title="Product Performance", margin=dict(l=20, r=20, t=35, b=20))
+        
+        return {
+            'type': 'plotly',
+            'figure': json.loads(fig.to_json())
+        }
+    
+    @staticmethod
+    def monthly_trend():
+        """Basic line chart"""
+        months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
+        values = [100, 120, 115, 140, 155, 170]
+        
+        fig = go.Figure(data=[go.Scatter(x=months, y=values, mode="lines+markers")])
+        fig.update_layout(title="Monthly Trend", margin=dict(l=20, r=20, t=35, b=20))
+        
+        return {
+            'type': 'plotly',
+            'figure': json.loads(fig.to_json())
+        }
+    
+    @staticmethod
+    def status_breakdown():
+        """Basic pie chart"""
+        statuses = ["Completed", "In Progress", "Pending", "Cancelled"]
+        counts = [45, 30, 15, 10]
+        
+        fig = go.Figure(data=[go.Pie(labels=statuses, values=counts, hole=0.3)])
+        fig.update_layout(title="Status Breakdown", margin=dict(l=10, r=10, t=35, b=10))
+        
+        return {
+            'type': 'plotly',
+            'figure': json.loads(fig.to_json())
+        }
+    
+    @staticmethod
+    def analytics_table():
+        """Basic table"""
+        df = pd.DataFrame({
+            "Metric": ["Sessions", "Page Views", "Bounce Rate", "Avg Duration", 
+                      "Conversions", "Revenue", "Users", "New Visitors"],
+            "Value": ["15,240", "42,180", "38.5%", "3m 24s", 
+                     "1,248", "$84,230", "8,450", "5,120"],
+            "Change": ["+12%", "+8%", "-5%", "+15%", "+22%", "+18%", "+10%", "+14%"]
+        })
+        
+        return {
+            'type': 'table',
+            'title': 'Analytics Overview',
+            'columns': list(df.columns),
+            'data': df.to_dict('records')
+        }
+    
+    @staticmethod
+    def performance_kpis():
+        """Basic KPI cards"""
+        return {
+            'type': 'kpi',
+            'kpis': {
+                "Server Uptime": "99.9%",
+                "Response Time": "120ms",
+                "Error Rate": "0.02%"
+            }
+        }
+
+
+# ========================================================
+# PLOT REGISTRY
+# ========================================================
+PLOT_REGISTRY = {
+    "sales_by_category": PlotFunctions.sales_by_category,
+    "weekly_revenue": PlotFunctions.weekly_revenue,
+    "regional_distribution": PlotFunctions.regional_distribution,
+    "customer_data": PlotFunctions.customer_data,
+    "overview_kpis": PlotFunctions.overview_kpis,
+    "product_performance": PlotFunctions.product_performance,
+    "monthly_trend": PlotFunctions.monthly_trend,
+    "status_breakdown": PlotFunctions.status_breakdown,
+    "analytics_table": PlotFunctions.analytics_table,
+    "performance_kpis": PlotFunctions.performance_kpis,
+    
+    # [YOUR PLOT REGISTRY MAPPING]
+}
+
+
+# ========================================================
+# BOX-PLOT MAPPING
+# ========================================================
+BOX_PLOT_MAPPING = {
+    # TAB 1 - Overview
+    "T1B1": "overview_kpis",
+    "T1B2": "sales_by_category",
+    "T1B3": "regional_distribution",
+    "T1B4": "customer_data",
+    
+    # TAB 2 - Analytics
+    "T2B1": "weekly_revenue",
+    "T2B2": "product_performance",
+    "T2B3": "analytics_table",
+    
+    # TAB 3 - Performance
+    "T3B1": "performance_kpis",
+    "T3B2": "status_breakdown",
+    "T3B3": "monthly_trend",
+    
+    # [YOUR BOX-PLOT MAPPING]
+}
+
+
+# ========================================================
+# TAB LAYOUT DEFINITIONS
+# ========================================================
+TAB_LAYOUTS = {
+    "Tab1": {
+        "name": "Overview",
+        "canvas_height": 1.5,
+        "layout": {
+            "meta": {"name": "overview"},
+            "slots": [
+                {"id": "T1B1", "x": 0.00, "y": 0.00, "w": 1.00, "h": 0.20},
+                {"id": "T1B2", "x": 0.00, "y": 0.20, "w": 0.40, "h": 0.50},
+                {"id": "T1B3", "x": 0.40, "y": 0.20, "w": 0.60, "h": 0.50},
+                {"id": "T1B4", "x": 0.00, "y": 0.58, "w": 1.00, "h": 1.2},
+            ]
+        }
+    },
+    "Tab2": {
+        "name": "Analytics",
+        "layout": {
+            "meta": {"name": "analytics"},
+            "slots": [
+                {"id": "T2B1", "x": 0.00, "y": 0.00, "w": 0.60, "h": 0.50},
+                {"id": "T2B2", "x": 0.60, "y": 0.00, "w": 0.40, "h": 0.50},
+                {"id": "T2B3", "x": 0.00, "y": 0.51, "w": 1.00, "h": 0.49},
+            ]
+        }
+    },
+    "Tab3": {
+        "name": "Performance",
+        "layout": {
+            "meta": {"name": "performance"},
+            "slots": [
+                {"id": "T3B1", "x": 0.00, "y": 0.00, "w": 1.00, "h": 0.20},
+                {"id": "T3B2", "x": 0.00, "y": 0.21, "w": 0.40, "h": 0.79},
+                {"id": "T3B3", "x": 0.40, "y": 0.21, "w": 0.60, "h": 0.79},
+            ]
+        }
+    }
+    # [YOUR TAB LAYOUTS]
+}
+
+
+# ========================================================
+# DASHBOARD CLASSES
+# ========================================================
+class DashboardTab:
+    def __init__(self, name: str, layout_config: Dict[str, Any]):
+        self.name = name
+        self.layout = layout_config
+        self.widgets: Dict[str, GenericWidget] = {}
+
+    def register_widget(self, slot_id: str, widget: GenericWidget):
+        self.widgets[slot_id] = widget
+        widget.generate_data()
+
+    def get_widget_configs(self) -> Dict[str, Any]:
+        return {slot_id: w.render_config() for slot_id, w in self.widgets.items()}
+
+    def get_widget_templates(self) -> Dict[str, str]:
+        return {slot_id: w.get_html_template() for slot_id, w in self.widgets.items()}
+
+
+class MultiTabDashboard:
+    def __init__(self, title: str = "Dashboard"):
+        self.title = title
+        self.tabs: List[DashboardTab] = []
+
+    def add_tab(self, tab: DashboardTab):
+        self.tabs.append(tab)
+
+    def generate_html(self) -> str:
+        tabs_data = []
+        for tab in self.tabs:
+            tabs_data.append({
+                "name": tab.name,
+                "layout": tab.layout,
+                "widgets": tab.get_widget_configs(),
+                "templates": tab.get_widget_templates(),
+            })
+
+        style = DASHBOARD_STYLE
+        
+        html_template = f"""
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {{
+      box-sizing: border-box;
+    }}
+    html, body {{
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      background: {style['canvas_bg']};
+      font-family: {style['font_family']};
+    }}
+    .header {{
+      background: {style['header_bg']};
+      color: {style['header_text']};
+      padding: {style['header_padding']};
+      font-size: {style['header_font_size']};
+      font-weight: {style['header_font_weight']};
+      letter-spacing: -0.5px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      z-index: 100;
+      position: relative;
+    }}
+    .tabs {{
+      display: flex;
+      gap: {style['tab_gap']};
+      background: {style['tab_bg']};
+      padding: {style['tab_padding']};
+      border-bottom: 2px solid rgba(255,255,255,0.1);
+    }}
+    .tab-btn {{
+      background: {style['tab_button_bg']};
+      border: none;
+      color: {style['tab_button_text']};
+      padding: {style['tab_button_padding']};
+      border-radius: {style['tab_button_radius']};
+      cursor: pointer;
+      font-size: {style['tab_button_font_size']};
+      font-weight: 500;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }}
+    .tab-btn::before {{
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 0;
+      height: 100%;
+      background: rgba(255,255,255,0.05);
+      transition: width 0.3s ease;
+    }}
+    .tab-btn:hover::before {{
+      width: 100%;
+    }}
+    .tab-btn:hover {{
+      background: rgba(255,255,255,0.12);
+    }}
+    .tab-btn.active {{
+      background: {style['tab_button_active_bg']};
+      color: {style['tab_button_active_text']};
+      font-weight: 600;
+      box-shadow: 0 -2px 8px rgba(0,0,0,0.08);
+    }}
+    .tab-content {{
+      display: none;
+      height: calc(100vh - 135px);
+      width: 100vw;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }}
+    .tab-content.active {{
+      display: block;
+    }}
+    .canvas {{
+      position: relative;
+      width: 100%;
+      min-height: 100%;
+      background: {style['canvas_bg']};
+      padding: {style['box_gap']};
+    }}
+    .slot {{
+      position: absolute;
+      padding: calc({style['box_gap']} / 2);
+    }}
+    .slot-inner {{
+      background: {style['box_bg']};
+      border: {style['box_border_width']} solid {style['box_border_color']};
+      border-radius: {style['box_border_radius']};
+      box-shadow: {style['box_shadow']};
+      height: 100%;
+      width: 100%;
+      overflow: auto;
+      padding: {style['box_padding']};
+      transition: box-shadow 0.3s ease, transform 0.2s ease;
+    }}
+    .slot-inner:hover {{
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+      transform: translateY(-2px);
+    }}
+    
+    /* Custom scrollbar for tab content */
+    .tab-content::-webkit-scrollbar {{
+      width: 10px;
+    }}
+    .tab-content::-webkit-scrollbar-track {{
+      background: #e8e8e8;
+    }}
+    .tab-content::-webkit-scrollbar-thumb {{
+      background: #888;
+      border-radius: 5px;
+    }}
+    .tab-content::-webkit-scrollbar-thumb:hover {{
+      background: #555;
+    }}
+    
+    /* Custom scrollbar for widgets */
+    .slot-inner::-webkit-scrollbar {{
+      width: 8px;
+      height: 8px;
+    }}
+    .slot-inner::-webkit-scrollbar-track {{
+      background: #f1f1f1;
+      border-radius: 4px;
+    }}
+    .slot-inner::-webkit-scrollbar-thumb {{
+      background: #c1c1c1;
+      border-radius: 4px;
+    }}
+    .slot-inner::-webkit-scrollbar-thumb:hover {{
+      background: #a8a8a8;
+    }}
+  </style>
+</head>
+<body>
+  <div class="header">{self.title}</div>
+  <div class="tabs" id="tabs"></div>
+  <div id="content"></div>
+
+  <script>
+  (function() {{
+      const TABS_DATA = {json.dumps(tabs_data)};
+      const tabsRoot = document.getElementById('tabs');
+      const contentRoot = document.getElementById('content');
+      const BASE_AREA = 50000;
+
+      // Create tabs
+      TABS_DATA.forEach((tab, i) => {{
+          const btn = document.createElement('button');
+          btn.className = 'tab-btn' + (i === 0 ? ' active' : '');
+          btn.textContent = tab.name;
+          btn.onclick = () => switchTab(i);
+          tabsRoot.appendChild(btn);
+
+          const content = document.createElement('div');
+          content.className = 'tab-content' + (i === 0 ? ' active' : '');
+          content.id = 'tab-' + i;
+
+          const canvas = document.createElement('div');
+          canvas.className = 'canvas';
+          canvas.id = 'canvas-' + i;
+          content.appendChild(canvas);
+
+          contentRoot.appendChild(content);
+      }});
+
+      // Initial render
+      TABS_DATA.forEach((tab, i) => {{
+          renderTab(i, tab, i === 0);
+      }});
+
+      function switchTab(idx) {{
+          document.querySelectorAll('.tab-btn').forEach((b, i) => {{
+              b.classList.toggle('active', i === idx);
+          }});
+          document.querySelectorAll('.tab-content').forEach((c, i) => {{
+              c.classList.toggle('active', i === idx);
+          }});
+          
+          // Re-render active tab to ensure Plotly charts resize properly
+          setTimeout(() => {{
+              renderTab(idx, TABS_DATA[idx], true);
+              window.dispatchEvent(new Event('resize'));
+          }}, 10);
+      }}
+
+      function renderTab(idx, tab, isVisible) {{
+          const canvas = document.getElementById('canvas-' + idx);
+          if (!canvas) return;
+
+          // Calculate dimensions
+          const headerHeight = 65;
+          const tabsHeight = 70;
+          const vw = window.innerWidth;
+          const baseVh = window.innerHeight - headerHeight - tabsHeight;
+          
+          // Get canvas height multiplier (default 1.0 = one viewport height)
+          const canvasHeightMultiplier = tab.layout.meta.canvas_height || 1.0;
+          const vh = baseVh * canvasHeightMultiplier;
+          
+          // Set canvas height explicitly
+          canvas.style.height = vh + 'px';
+
+          canvas.innerHTML = '';
+
+          tab.layout.slots.forEach(slot => {{
+              const gapSize = 12;
+              const left = Math.round(slot.x * vw);
+              const top = Math.round(slot.y * vh);
+              const w = Math.round(slot.w * vw);
+              const h = Math.round(slot.h * vh);
+
+              const slotDiv = document.createElement('div');
+              slotDiv.className = 'slot';
+              slotDiv.style.left = left + 'px';
+              slotDiv.style.top = top + 'px';
+              slotDiv.style.width = w + 'px';
+              slotDiv.style.height = h + 'px';
+
+              const inner = document.createElement('div');
+              inner.className = 'slot-inner';
+              slotDiv.appendChild(inner);
+              canvas.appendChild(slotDiv);
+
+              const area = w * h;
+              const scale = Math.sqrt(area / BASE_AREA);
+              const fontSize = Math.max(12, Math.round(14 * scale));
+
+              const WIDGET_DATA = tab.widgets;
+              const TEMPLATES = tab.templates;
+
+              if (TEMPLATES[slot.id] && WIDGET_DATA[slot.id]) {{
+                  try {{
+                      const fn = new Function('slot', 'inner', 'fontSize', 'WIDGET_DATA', TEMPLATES[slot.id]);
+                      fn(slot, inner, fontSize, WIDGET_DATA);
+                  }} catch (err) {{
+                      inner.innerHTML = '<div style="color:red; padding:20px;">Error: ' + err.message + '</div>';
+                      console.error('Widget error:', err);
+                  }}
+              }} else {{
+                  inner.innerHTML = '<div style="color:#999; padding:20px; text-align:center;">Empty slot: ' + slot.id + '</div>';
+              }}
+          }});
+      }}
+
+      // Debounced resize handler
+      let resizeTimer;
+      window.addEventListener('resize', () => {{
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => {{
+              const activeIdx = Array.from(document.querySelectorAll('.tab-content')).findIndex(el => el.classList.contains('active'));
+              if (activeIdx >= 0) {{
+                  renderTab(activeIdx, TABS_DATA[activeIdx], true);
+              }}
+          }}, 150);
+      }});
+  }})();
+  </script>
+</body>
+</html>
+"""
+        return html_template
+
+
+# ========================================================
+# AUTOMATIC DASHBOARD BUILDER
+# ========================================================
+def build_dashboard_automatically():
+    """Builds the entire dashboard using mappings"""
+    dashboard = MultiTabDashboard("Professional Analytics Dashboard")
+    
+    for tab_key, tab_config in TAB_LAYOUTS.items():
+        tab = DashboardTab(tab_config["name"], tab_config["layout"])
+        
+        for slot in tab_config["layout"]["slots"]:
+            box_id = slot["id"]
+            
+            if box_id in BOX_PLOT_MAPPING:
+                plot_name = BOX_PLOT_MAPPING[box_id]
+                if plot_name in PLOT_REGISTRY:
+                    plot_func = PLOT_REGISTRY[plot_name]
+                    widget = GenericWidget(box_id, plot_func)
+                    tab.register_widget(box_id, widget)
+        
+        dashboard.add_tab(tab)
+    
+    return dashboard
+
+
+# ========================================================
+# RENDER
+# ========================================================
+dashboard = build_dashboard_automatically()
+html_code = dashboard.generate_html()
+st_html(html_code, height=900, scrolling=False)
